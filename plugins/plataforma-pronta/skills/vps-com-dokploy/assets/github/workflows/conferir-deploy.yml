@@ -1,0 +1,41 @@
+# Confere, de fora, que o deploy que o Dokploy fez está mesmo no ar. O Dokploy marca o deploy como "done" mesmo quando
+# o Swarm devolveu a versão anterior porque a nova não ficou saudável (medido no ensaio). Esta Action espera o /health
+# do ambiente responder com o commit do push e fica VERMELHA se ele não chegar, para alguém olhar.
+# O app precisa devolver {"commit": "<sha>"} no /health. O Dokploy não passa o commit para o build: grave-o no build a
+# partir da pasta .git que o clone deixa (o trecho de Dockerfile está em references/02, "Conferir de fora"). Se o
+# /health nunca mostrar o commit, esta Action fica vermelha no primeiro deploy: é ela própria se provando.
+# Variáveis do repositório: STAGING_URL (do app que segue a dev) e PROD_URL (do que segue a main).
+
+name: Conferir deploy
+
+on:
+  push:
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+# Um push novo na mesma branch cancela a conferência do anterior (que nunca chegaria: o commit no ar é o novo).
+concurrency:
+  group: conferir-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conferir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: O ambiente responde com este commit
+        env:
+          URL: ${{ github.ref_name == 'main' && vars.PROD_URL || vars.STAGING_URL }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          quer=${SHA:0:7}
+          for _ in $(seq 1 40); do
+            atual=$(curl -fsS --max-time 10 "$URL/health" | jq -r '.commit // empty' || true)
+            if [ "${atual:0:7}" = "$quer" ]; then echo "no ar com $quer"; exit 0; fi
+            sleep 20
+          done
+          echo "::error::depois de 20 min, $URL/health ainda responde com '${atual:-nada}', não com $quer: o deploy falhou ou voltou para a versão anterior (veja o serviço no Dokploy)"
+          exit 1

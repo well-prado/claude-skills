@@ -97,7 +97,7 @@ test("o painel só abre para os IPs de PAINEL_IPS e fica fora da rede do app", (
   assert.doesNotMatch(p, /traefik-public/);
   assert.match(p, /traefik\.swarm\.network=painel/);
   assert.match(servico(stack("traefik.yml"), "traefik"), /networks:\n\s+- traefik-public\n\s+- painel/);
-  assert.match(setup, /^docker network inspect painel .*docker network create --driver overlay painel$/m);
+  assert.match(setup, /^\s*docker network inspect painel .*docker network create --driver overlay painel$/m);
 });
 
 test("o Postgres troca parando o antigo antes e não encosta na rede do Traefik", () => {

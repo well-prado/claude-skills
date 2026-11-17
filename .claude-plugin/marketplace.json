@@ -9,10 +9,12 @@
   "plugins": [
     {
       "name": "plataforma-pronta",
-      "description": "VPS de produção (Swarm, Traefik, Portainer, Postgres, staging e produção, deploy sem queda, virada de PaaS) e o Brain com contratos de regra de negócio.",
+      "description": "VPS de produção (Swarm, Traefik, Portainer, Postgres, staging e produção, deploy sem queda, virada de PaaS), a própria Vercel com Dokploy endurecido, e o Brain com contratos de regra de negócio.",
       "source": "./plugins/plataforma-pronta",
       "category": "development",
-      "author": { "name": "Wellington Prado" },
+      "author": {
+        "name": "Wellington Prado"
+      },
       "homepage": "https://github.com/well-prado/claude-skills"
     }
   ]

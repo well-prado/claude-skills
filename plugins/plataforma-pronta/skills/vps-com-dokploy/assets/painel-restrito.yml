@@ -1,0 +1,47 @@
+# Painel do Dokploy só para os seus IPs. Vai para /etc/dokploy/traefik/dynamic/painel-restrito.yml no servidor,
+# ANTES de abrir as portas 80/443 para fora (trancar-portas.sh --painel).
+#
+# Três rotas, todas com prioridade maior que as do Dokploy, todas passando pela lista de IPs:
+#   - painel-restrito: o domínio do painel no HTTPS;
+#   - painel-restrito-http: o mesmo domínio no HTTP (manda para o HTTPS); sem ela, quem desligasse o HTTPS do painel
+#     deixaria o login aberto em HTTP para qualquer IP;
+#   - painel-interno: o nome dokploy.docker.localhost na porta 80, que o Dokploy cria ao instalar e aponta para o
+#     painel. (O desafio do Let's Encrypt continua passando: a rota dele tem prioridade máxima no Traefik.)
+# Por que um arquivo à parte: o Dokploy regrava o dokploy.yml (a rota dele para o painel) a cada vez que o domínio do
+# painel é salvo, e um middleware posto lá à mão some. Este arquivo ele não toca.
+# Ensaiado: IP de fora da lista → 403; IP da lista → 200; continua valendo depois de o Dokploy regravar o painel.
+#
+# Troque PAINEL_DOMINIO e SEU_IP (vários: ["1.2.3.4/32", "5.6.7.8/32"]). O Traefik relê o arquivo sozinho.
+# O IP de casa mudou e o painel deu 403? Troque aqui pelo SSH (o SSH não depende desta lista).
+http:
+  routers:
+    painel-restrito:
+      rule: Host(`PAINEL_DOMINIO`)
+      entryPoints: [websecure]
+      priority: 10000
+      middlewares: [painel-so-meus-ips, painel-cabecalhos]
+      service: dokploy-service-app@file
+      tls:
+        certResolver: letsencrypt
+    painel-restrito-http:
+      rule: Host(`PAINEL_DOMINIO`)
+      entryPoints: [web]
+      priority: 10000
+      middlewares: [painel-so-meus-ips, redirect-to-https@file]
+      service: dokploy-service-app@file
+    painel-interno:
+      rule: Host(`dokploy.docker.localhost`)
+      entryPoints: [web]
+      priority: 10000
+      middlewares: [painel-so-meus-ips]
+      service: dokploy-service-app@file
+  middlewares:
+    painel-so-meus-ips:
+      ipAllowList:
+        sourceRange: ["SEU_IP/32"]
+    painel-cabecalhos:
+      headers:
+        stsSeconds: 31536000
+        frameDeny: true
+        contentTypeNosniff: true
+        referrerPolicy: same-origin
