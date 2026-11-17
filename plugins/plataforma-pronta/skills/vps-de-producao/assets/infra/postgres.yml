@@ -1,0 +1,48 @@
+# Postgres (stack "postgres"): um só para o servidor, com um banco e um papel por ambiente (produção e staging).
+#   POSTGRES_PASSWORD=... docker stack deploy -c postgres.yml postgres
+# (ou cole este arquivo no Portainer, em Stacks → Add stack, e escreva a senha lá: assim ela fica editável na tela).
+#
+# Sem porta aberta para a internet: os apps entram na rede externa "banco" e usam o host "postgres", cada um com o
+# próprio papel, nunca o superusuário (postgres-app-role.sh):
+#   DATABASE_URL=postgres://meuapp:SENHA@postgres:5432/meuapp
+#   DATABASE_URL=postgres://meuapp_dev:SENHA@postgres:5432/meuapp_dev     (staging)
+# O superusuário "postgres" fica para o backup (backup-postgres.sh) e para a virada.
+#
+# Precisa de pg_cron, pg_net, Vault ou do resto do Supabase (Auth, PostgREST, Storage, Realtime)? Troque a imagem
+# por supabase/postgres com versão fixa e veja references/04-postgres-e-backup.md, seção "Variante Supabase".
+services:
+  postgres:
+    image: postgres:18.6 # versão fixa; suba de minor (18.x) depois de ler as notas, de major só com dump e restore
+    environment:
+      POSTGRES_USER: postgres
+      # Senha forte só de letras e números (cabe na URL sem escapar). Gere com: openssl rand -hex 24
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD}"
+    volumes:
+      # No Postgres 18 o volume é /var/lib/postgresql (os dados ficam em 18/docker dentro dele).
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - banco
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    stop_grace_period: 60s # dá tempo do checkpoint no desligamento
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+      update_config:
+        order: stop-first # dois Postgres no mesmo volume corrompem os dados
+      restart_policy:
+        condition: any
+        delay: 5s
+
+networks:
+  # Criada pelo setup-server.sh: só o Postgres e os apps que usam o banco.
+  banco:
+    external: true
+
+volumes:
+  postgres_data:

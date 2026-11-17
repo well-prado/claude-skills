@@ -1,0 +1,20 @@
+#!/bin/sh
+# Antes de um push para a dev ou a main (as duas publicam: a dev no staging, a main na produção), roda as checagens do
+# projeto — o script "pre-push" do package.json (ex.: "tsc --noEmit && vitest run && node --test infra/infra.test.mjs") — em vez de
+# gastar minutos do GitHub Actions a cada push. Uma mudança quebrada não chega ao staging sem ninguém ver.
+# Ligar uma vez por clone: git config core.hooksPath .githooks   (ou no "prepare" do package.json).
+# Numa emergência: git push --no-verify.
+set -e
+
+publishes=
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  case "$remote_ref" in refs/heads/dev | refs/heads/main) publishes=1 ;; esac
+done
+[ -n "$publishes" ] || exit 0
+
+cd "$(git rev-parse --show-toplevel)"
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  echo "pre-push: há mudanças não commitadas; as checagens rodam na pasta como está, não no commit enviado" >&2
+fi
+echo "pre-push: checagens antes de publicar (npm run pre-push)..."
+npm run --silent pre-push

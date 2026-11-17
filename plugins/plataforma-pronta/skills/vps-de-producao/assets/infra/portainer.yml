@@ -1,0 +1,66 @@
+# Portainer CE + agente, publicado pelo Traefik em https://$PAINEL_DOMINIO, só para os IPs de $PAINEL_IPS.
+#   PAINEL_IPS=SEU_IP/32 PAINEL_DOMINIO=painel.seudominio.com.br docker stack deploy -c portainer.yml portainer
+# Baseado na stack oficial (downloads.portainer.io/ce-lts/portainer-agent-stack.yml), sem porta aberta no servidor.
+# Sobe pela linha de comando, nunca pelo próprio Portainer.
+#
+# O admin do Portainer equivale a root no servidor (o agente tem o docker.sock e os volumes, onde mora o Postgres).
+# Por isso:
+#   - o painel só abre para os IPs de PAINEL_IPS (obrigatório; vários separados por vírgula). O IP de casa mudou e o
+#     painel deu 403: rode de novo este deploy pelo SSH com o IP novo;
+#   - o Portainer fica fora da rede traefik-public, onde entram os apps. O Traefik chega nele pela rede "painel", que
+#     só os dois usam e na qual nenhum contêiner avulso entra.
+#
+# Na primeira subida o Portainer espera 5 minutos pela criação do admin e pede o "setup token" que imprime no log.
+# QUEM CRIA O ADMIN É A PESSOA, não o agente (a senha é dela). Passou do tempo: reinicie e pegue o token novo:
+#   docker service update --force portainer_portainer
+#   docker service logs portainer_portainer 2>&1 | grep setup_token | tail -1
+# Se uma versão nova não subir, ela não volta sozinha: docker service rollback portainer_portainer.
+services:
+  agent:
+    image: portainer/agent:2.45.2
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/volumes:/var/lib/docker/volumes
+    networks:
+      - agent_network
+    deploy:
+      mode: global
+      placement:
+        constraints: [node.platform.os == linux]
+
+  portainer:
+    image: portainer/portainer-ce:2.45.2
+    command: -H tcp://tasks.agent:9001 --tlsskipverify
+    volumes:
+      - portainer_data:/data
+    networks:
+      - agent_network
+      - painel
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+      labels:
+        - traefik.enable=true
+        - traefik.swarm.network=painel
+        - traefik.http.routers.portainer.rule=Host(`${PAINEL_DOMINIO:?defina PAINEL_DOMINIO, ex. painel.seudominio.com.br}`)
+        - traefik.http.routers.portainer.entrypoints=websecure
+        - traefik.http.routers.portainer.tls.certresolver=letsencrypt
+        - traefik.http.routers.portainer.middlewares=painel-ip,portainer-headers
+        - traefik.http.middlewares.painel-ip.ipallowlist.sourcerange=${PAINEL_IPS:?defina PAINEL_IPS com o IP de casa, ex. 1.2.3.4/32}
+        - traefik.http.middlewares.portainer-headers.headers.stsSeconds=31536000
+        - traefik.http.middlewares.portainer-headers.headers.contentTypeNosniff=true
+        - traefik.http.middlewares.portainer-headers.headers.frameDeny=true
+        - traefik.http.middlewares.portainer-headers.headers.referrerPolicy=same-origin
+        - traefik.http.services.portainer.loadbalancer.server.port=9000
+
+networks:
+  # Só o agente e o Portainer: sem attachable, nenhum "docker run --network" entra nela.
+  agent_network:
+    driver: overlay
+  # Criada pelo setup-server.sh (overlay, sem attachable): só o Traefik e o Portainer.
+  painel:
+    external: true
+
+volumes:
+  portainer_data:

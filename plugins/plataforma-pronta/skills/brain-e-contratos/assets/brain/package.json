@@ -1,0 +1,27 @@
+{
+  "name": "brain",
+  "version": "0.1.0",
+  "private": true,
+  "description": "O mapa da aplicação lido do próprio código: rotas, telas, ações, banco, contratos e checagens",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx servidor.ts --abrir",
+    "gerar": "tsx generator/cli.ts gerar",
+    "checar": "tsx generator/cli.ts checar",
+    "achados": "tsx generator/cli.ts achados",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "ts-morph": "^28.0.0",
+    "tsx": "^4.23.15"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "~5.9",
+    "vitest": "^5.0.5"
+  }
+}

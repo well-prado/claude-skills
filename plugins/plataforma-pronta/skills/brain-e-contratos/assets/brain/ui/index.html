@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Brain</title>
+  <link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+  <aside class="lateral">
+    <div class="marca"><span class="ponto"></span><strong id="nome">Brain</strong></div>
+    <button class="busca-botao" id="abrirBusca" type="button">Buscar <kbd id="atalho">⌘K</kbd></button>
+    <nav id="menu"></nav>
+    <div class="rodape">
+      <label>Abrir no
+        <select id="editor">
+          <option value="vscode">VS Code</option>
+          <option value="cursor">Cursor</option>
+          <option value="windsurf">Windsurf</option>
+          <option value="zed">Zed</option>
+          <option value="nenhum">só copiar o caminho</option>
+        </select>
+      </label>
+      <button id="tema" type="button">Tema</button>
+      <small id="gerado"></small>
+    </div>
+  </aside>
+  <main id="conteudo"><p class="vazio">Carregando o mapa…</p></main>
+  <dialog id="busca">
+    <input id="buscaTexto" type="search" placeholder="Rota, tela, ação, tabela, contrato, arquivo…" autocomplete="off">
+    <ul id="buscaResultados"></ul>
+  </dialog>
+  <script src="app.js"></script>
+</body>
+</html>

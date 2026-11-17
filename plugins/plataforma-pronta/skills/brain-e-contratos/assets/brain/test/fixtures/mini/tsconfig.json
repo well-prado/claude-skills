@@ -1,0 +1,4 @@
+{
+  // comentário de propósito: o brain lê tsconfig com comentário
+  "compilerOptions": { "baseUrl": ".", "paths": { "@/*": ["./src/*"] } } /* e este também */
+}

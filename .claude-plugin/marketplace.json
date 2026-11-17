@@ -1,0 +1,19 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "well-prado",
+  "description": "Skills do Wellington Prado para Claude Code: do servidor próprio de produção ao mapa vivo da aplicação.",
+  "owner": {
+    "name": "Wellington Prado",
+    "url": "https://github.com/well-prado"
+  },
+  "plugins": [
+    {
+      "name": "plataforma-pronta",
+      "description": "VPS de produção (Swarm, Traefik, Portainer, Postgres, staging e produção, deploy sem queda, virada de PaaS) e o Brain com contratos de regra de negócio.",
+      "source": "./plugins/plataforma-pronta",
+      "category": "development",
+      "author": { "name": "Wellington Prado" },
+      "homepage": "https://github.com/well-prado/claude-skills"
+    }
+  ]
+}

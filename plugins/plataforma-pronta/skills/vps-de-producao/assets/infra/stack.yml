@@ -1,0 +1,77 @@
+# A stack do app no Swarm, atrás do Traefik. O mesmo molde serve as duas stacks: "meuapp" (produção, branch main) e
+# "meuapp-dev" (staging, branch dev). Quem preenche os ${NOME} é o docker stack deploy, chamado pelo infra/ci-deploy.sh:
+#   - a imagem (${APP_IMAGE}), a versão e o commit: o ci-deploy, a cada deploy;
+#   - o que muda entre os ambientes sem ser segredo (domínio, nomes das regras, memória, noindex):
+#     infra/stacks/<ambiente>.env, no repositório;
+#   - os segredos (DATABASE_URL, chaves): /opt/deploy/segredos/<ambiente>.env, só no servidor.
+# Nenhum valor de verdade mora aqui. Um cifrão dentro de um valor se escreve dobrado ($$).
+#
+# Serviço a mais (ex.: "api" + "web", ou um "worker" de filas): copie o bloco, troque o nome, a imagem
+# (${API_IMAGE}...), a porta e os nomes das regras, e ponha o serviço em SERVICOS no ci-deploy.sh, na ordem da troca.
+services:
+  app:
+    # Trocada a cada deploy: a tag do commit, nunca latest (o rollback do Swarm volta para a tag anterior de verdade).
+    image: ${APP_IMAGE:?defina APP_IMAGE, o deploy faz isso}
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      # O app lê os endereços do ambiente AO SUBIR (nunca embutidos no build): é o que deixa a MESMA imagem testada no
+      # staging ir para a produção. Em Next.js, NEXT_PUBLIC_* é embutido no build: veja references/05.
+      APP_URL: "https://${APP_DOMINIO:?defina APP_DOMINIO em infra/stacks/<ambiente>.env}"
+      DATABASE_URL: "${DATABASE_URL:?defina DATABASE_URL nos segredos do ambiente}"
+      # Versão e commit no ar: o /health devolve os dois, e a Action confere que o deploy trocou de verdade.
+      APP_VERSAO: "${APP_VERSAO:-0.0.0}"
+      APP_COMMIT: "${APP_COMMIT:-desconhecido}"
+      # Teto do heap do Node abaixo do limite de memória do serviço (vazio = o Node escolhe).
+      NODE_OPTIONS: "${NODE_OPTIONS:-}"
+    networks: [traefik-public, banco]
+    # No deploy, o processo antigo recebe SIGTERM, para de aceitar conexões novas, termina as que tem e sai. Este é o
+    # prazo antes do SIGKILL: maior que o tempo de saída do app (references/05-app-e-deploy-sem-queda.md).
+    stop_grace_period: 45s
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+      update_config:
+        # A nova sobe, fica saudável (HEALTHCHECK do Dockerfile) e só então a antiga sai: ninguém fica sem app.
+        # Nos segundos em que as duas convivem, jobs de fundo só rodam em quem tem o lock de líder no Postgres.
+        order: start-first
+        monitor: 60s
+        failure_action: rollback
+      rollback_config:
+        order: start-first
+      restart_policy:
+        condition: any
+        delay: 5s
+      resources:
+        limits:
+          memory: ${APP_MEMORIA:-1024M}
+      labels:
+        - traefik.enable=true
+        # O Traefik manda para o endereço virtual do serviço no Swarm, e o Swarm escolhe a task: num deploy, a nova
+        # entra na rota quando fica saudável e a antiga sai quando é desligada, na hora, sem esperar o Traefik reler o
+        # Swarm (a cada 15 s). Sem isto, há uma janela de 502 a cada deploy.
+        - traefik.swarm.lbswarm=true
+        - traefik.http.services.${ROTA:-meuapp}-app.loadbalancer.server.port=3000
+        # Uma conexão que cai no meio da troca é tentada de novo, e o Swarm a manda à instância nova.
+        - traefik.http.middlewares.${ROTA:-meuapp}-retry.retry.attempts=3
+        - traefik.http.middlewares.${ROTA:-meuapp}-retry.retry.initialinterval=100ms
+        - traefik.http.routers.${ROTA:-meuapp}-app.rule=Host(`${APP_DOMINIO}`)
+        - traefik.http.routers.${ROTA:-meuapp}-app.entrypoints=websecure
+        - traefik.http.routers.${ROTA:-meuapp}-app.tls.certresolver=letsencrypt
+        - traefik.http.routers.${ROTA:-meuapp}-app.middlewares=${ROTA:-meuapp}-headers,${ROTA:-meuapp}-retry
+        - traefik.http.routers.${ROTA:-meuapp}-app.service=${ROTA:-meuapp}-app
+        # Cabeçalhos de segurança. Ajuste o Permissions-Policy se o app usa câmera, microfone ou localização.
+        - traefik.http.middlewares.${ROTA:-meuapp}-headers.headers.frameDeny=true
+        - traefik.http.middlewares.${ROTA:-meuapp}-headers.headers.contentTypeNosniff=true
+        - traefik.http.middlewares.${ROTA:-meuapp}-headers.headers.referrerPolicy=strict-origin-when-cross-origin
+        - traefik.http.middlewares.${ROTA:-meuapp}-headers.headers.stsSeconds=31536000
+        # Vazio na produção (o Traefik não manda o cabeçalho); "noindex,nofollow" no staging, fora dos buscadores.
+        - traefik.http.middlewares.${ROTA:-meuapp}-headers.headers.customResponseHeaders.X-Robots-Tag=${ROBOTS:-}
+
+networks:
+  # As duas criadas pelo setup-server.sh.
+  traefik-public:
+    external: true
+  banco:
+    external: true

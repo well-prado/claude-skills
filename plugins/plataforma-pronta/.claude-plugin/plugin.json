@@ -1,0 +1,10 @@
+{
+  "name": "plataforma-pronta",
+  "description": "VPS de produção (Docker Swarm, Traefik, Portainer, Postgres, staging dev e produção main, deploy sem queda pelo GitHub Actions, backup fora, virada saindo de Vercel/Supabase) e o Brain: mapa vivo da aplicação com contratos de regra de negócio checados no CI.",
+  "version": "1.0.0",
+  "author": { "name": "Wellington Prado", "url": "https://github.com/well-prado" },
+  "homepage": "https://github.com/well-prado/claude-skills",
+  "repository": "https://github.com/well-prado/claude-skills",
+  "license": "MIT",
+  "keywords": ["vps", "docker-swarm", "traefik", "portainer", "postgres", "deploy", "staging", "brain", "contratos", "pt-br"]
+}

@@ -1,0 +1,57 @@
+# Staging: cada push na dev publica a stack "meuapp-dev" no servidor. O runner só manda o código por SSH: o build, a
+# troca da stack e a espera rodam no servidor (infra/ci-deploy.sh, o único comando que a chave do GitHub roda lá), e os
+# segredos ficam lá.
+# Secrets (no Environment "staging"): DEPLOY_SSH_KEY (privada da chave do usuário deploy), DEPLOY_KNOWN_HOSTS (a linha
+# da chave do servidor, conferida com a impressão digital). Variáveis: DEPLOY_HOST e STAGING_URL (https://dev...).
+name: Deploy staging
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Secrets no Environment "staging", liberado só para a branch dev (references/06).
+    environment: staging
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Chave SSH do deploy
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy ~/.ssh/known_hosts
+
+      - name: Build e deploy no servidor
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          tag=$(git rev-parse --short=7 HEAD)
+          git archive --format=tar.gz HEAD | ssh -i ~/.ssh/deploy -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes -o ConnectTimeout=20 -o ServerAliveInterval=30 "deploy@$DEPLOY_HOST" "deploy dev $tag"
+
+      - name: Staging no ar com o commit novo
+        env:
+          URL: ${{ vars.STAGING_URL }}
+        run: |
+          set -euo pipefail
+          tag=$(git rev-parse --short=7 HEAD)
+          curl -fsS --retry 6 --retry-delay 5 --retry-all-errors "$URL/health" -o health.json
+          test "$(jq -r .commit health.json)" = "$tag" || { echo "::error::o staging responde, mas com outro commit"; cat health.json; exit 1; }

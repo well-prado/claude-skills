@@ -1,0 +1,116 @@
+# Produção: o merge do PR dev → main publica a stack "meuapp" sem derrubar ninguém (start-first; infra/stack.yml).
+# Vai para a produção a IMAGEM QUE FOI TESTADA no staging, sem novo build: o código do merge tem de ser o mesmo da dev,
+# e esse commit da dev tem de ter passado pelo deploy do staging. O plano gratuito do GitHub não trava a main em repo
+# privado; esta Action é a trava: um push direto ou um merge que não veio da dev não é publicado.
+# Correção urgente: Run workflow com "hotfix" (publica o commit da main como está) e, depois, merge da main na dev.
+# Cada publicação precisa de uma versão nova no package.json; no fim a Action cria a tag vX.Y.Z.
+# Secrets (no Environment "production"): DEPLOY_SSH_KEY, DEPLOY_KNOWN_HOSTS. Variáveis: DEPLOY_HOST e PROD_URL.
+name: Deploy produção
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      hotfix:
+        description: 'Correção urgente: publicar o commit da main sem a conferência do staging'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # a tag vX.Y.Z
+  actions: read # conferir o deploy do staging
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.ref == 'refs/heads/main'
+    # Os secrets do deploy ficam no Environment "production", liberado só para a branch main (Settings → Environments
+    # → Deployment branches). Sem isso, qualquer workflow de qualquer branch lê a chave (references/06).
+    environment: production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Veio da dev e passou pelo staging
+        id: origin
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOTFIX: ${{ inputs.hotfix || false }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          if [ "$HOTFIX" = true ]; then
+            echo "::warning::hotfix: publicado sem a conferência do staging; faça o merge da main na dev"
+            echo "image=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          parent=$(git rev-parse -q --verify 'HEAD^2') || fail 'a main só é publicada por merge de PR da dev (este commit não é um merge)'
+          [ "$(git rev-parse 'HEAD^{tree}')" = "$(git rev-parse 'HEAD^2^{tree}')" ] \
+            || fail 'o código do merge difere do da dev (a main tem commits que a dev não tem): faça o merge da main na dev, publique no staging e abra o PR de novo'
+          # Pela API, não por git fetch: com persist-credentials false, o fetch falha em repositório privado.
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$parent...dev" --jq .status)
+          case "$status" in ahead | identical) ;; *) fail "o commit $parent do merge não está na dev ($status)" ;; esac
+          ok=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-staging.yml/runs?head_sha=$parent&status=success" --jq .total_count)
+          [ "$ok" -gt 0 ] || fail "o commit $parent da dev não foi publicado no staging com sucesso"
+          echo "image=$(git rev-parse --short=7 "$parent")" >> "$GITHUB_OUTPUT"
+
+      - name: Versão nova
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(jq -r '.version // empty' package.json)
+          [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo '::error::package.json sem "version" X.Y.Z'; exit 1; }
+          tagged=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v$version" --jq ".[] | select(.ref == \"refs/tags/v$version\") | .ref")
+          [ -z "$tagged" ] || { echo "::error::v$version já foi publicada: suba a versão no package.json"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Chave SSH do deploy
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy ~/.ssh/known_hosts
+
+      - name: Deploy no servidor
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          IMAGE: ${{ steps.origin.outputs.image }}
+        run: |
+          set -euo pipefail
+          tag=$(git rev-parse --short=7 HEAD)
+          git archive --format=tar.gz HEAD | ssh -i ~/.ssh/deploy -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes -o ConnectTimeout=20 -o ServerAliveInterval=30 "deploy@$DEPLOY_HOST" "deploy prod $tag $IMAGE"
+
+      - name: Produção no ar com o commit e a versão novos
+        env:
+          URL: ${{ vars.PROD_URL }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag=$(git rev-parse --short=7 HEAD)
+          curl -fsS --retry 6 --retry-delay 5 --retry-all-errors "$URL/health" -o health.json
+          test "$(jq -r .commit health.json)" = "$tag" || { echo "::error::a produção responde, mas com outro commit"; cat health.json; exit 1; }
+          test "$(jq -r .versao health.json)" = "$VERSION" || { echo "::error::a produção responde, mas com outra versão"; cat health.json; exit 1; }
+
+      - name: Tag da versão
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag=$(gh api "repos/$GITHUB_REPOSITORY/git/tags" -f tag="v$VERSION" -f message="v$VERSION" -f object="$GITHUB_SHA" -f type=commit --jq .sha)
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/v$VERSION" -f sha="$tag" > /dev/null
+          echo "v$VERSION publicada ($GITHUB_SHA)"
