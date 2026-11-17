@@ -1,0 +1,20 @@
+{
+  "_leia": "Valores das Swarm Settings de cada aplicação (Advanced → Cluster Settings → Swarm Settings, ou application.update pela API). Tempos em NANOSSEGUNDOS (3000000000 = 3 s). Troque o Test pela rota de saúde e a porta do seu app; a imagem precisa ter wget ou curl (ou use CMD com o binário do próprio app). Sem o HealthCheck, uma versão que sobe mas não responde fica no ar com 502 (medido) e o Dokploy ainda marca o deploy como done.",
+  "healthCheckSwarm": {
+    "Test": ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/health || exit 1"],
+    "Interval": 10000000000,
+    "Timeout": 3000000000,
+    "StartPeriod": 30000000000,
+    "Retries": 3
+  },
+  "updateConfigSwarm": {
+    "Parallelism": 1,
+    "Order": "start-first",
+    "FailureAction": "rollback",
+    "Monitor": 30000000000
+  },
+  "rollbackConfigSwarm": {
+    "Parallelism": 1,
+    "Order": "start-first"
+  }
+}

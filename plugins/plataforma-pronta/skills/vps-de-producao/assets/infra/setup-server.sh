@@ -9,9 +9,13 @@
 #                   chave tranca você fora por 1 h (aconteceu no projeto que deu origem a este arquivo).
 #   FUSO            fuso do servidor (padrão America/Sao_Paulo). Os crons e os logs seguem este fuso.
 #   SWAP_GB         tamanho do swap (padrão 4).
+#   SWARM           "nao" pula o Swarm e as redes (para quem vai instalar um painel que cria o próprio Swarm, como o
+#                   Dokploy, cujo instalador apaga qualquer Swarm existente). Padrão: sim.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 FUSO=${FUSO:-America/Sao_Paulo}
+SWARM=${SWARM:-sim}
+case "$SWARM" in sim | nao) ;; *) echo "SWARM tem de ser sim ou nao (veio: $SWARM)" >&2; exit 1 ;; esac
 SWAP_GB=${SWAP_GB:-4}
 log() { printf '\n== %s\n' "$*"; }
 
@@ -52,17 +56,19 @@ ufw allow 80/tcp comment http
 ufw allow 443/tcp comment https
 ufw --force enable
 
-log "Swarm e redes"
-if [ "$(docker info -f '{{.Swarm.LocalNodeState}}')" != active ]; then
-  ADDR=$(ip -4 route get 1.1.1.1 | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}')
-  docker swarm init --advertise-addr "$ADDR"
+if [ "$SWARM" = sim ]; then
+  log "Swarm e redes"
+  if [ "$(docker info -f '{{.Swarm.LocalNodeState}}')" != active ]; then
+    ADDR=$(ip -4 route get 1.1.1.1 | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}')
+    docker swarm init --advertise-addr "$ADDR"
+  fi
+  # traefik-public: onde o Traefik encontra os apps. Attachable para um "docker run" de diagnóstico poder entrar.
+  docker network inspect traefik-public >/dev/null 2>&1 || docker network create --driver overlay --attachable traefik-public
+  # painel: só o Traefik e o Portainer. Sem attachable: nenhum contêiner avulso nem do app chega ao painel por dentro.
+  docker network inspect painel >/dev/null 2>&1 || docker network create --driver overlay painel
+  # banco: só o Postgres e os apps que usam o banco. Fora da traefik-public: o Traefik nunca enxerga o Postgres.
+  docker network inspect banco >/dev/null 2>&1 || docker network create --driver overlay banco
 fi
-# traefik-public: onde o Traefik encontra os apps. Attachable para um "docker run" de diagnóstico poder entrar.
-docker network inspect traefik-public >/dev/null 2>&1 || docker network create --driver overlay --attachable traefik-public
-# painel: só o Traefik e o Portainer. Sem attachable: nenhum contêiner avulso nem do app chega ao painel por dentro.
-docker network inspect painel >/dev/null 2>&1 || docker network create --driver overlay painel
-# banco: só o Postgres e os apps que usam o banco. Fora da traefik-public: o Traefik nunca enxerga o Postgres.
-docker network inspect banco >/dev/null 2>&1 || docker network create --driver overlay banco
 
 log "SSH"
 cat > /etc/ssh/sshd_config.d/00-servidor.conf <<'EOF'
@@ -91,10 +97,14 @@ else
   rm -f /etc/ssh/sshd_config.d/01-so-chave.conf
   echo "AVISO: não achei chave válida em /root/.ssh/authorized_keys; a senha do root continua valendo no SSH. Ponha a chave e rode de novo."
 fi
+# No Ubuntu 24.04 com ssh.socket, /run/sshd só existe depois da primeira conexão; o sshd -t falha sem ele.
+install -d -m 755 /run/sshd
 sshd -t
 systemctl restart ssh
-# Confere o que o sshd de fato aplicou, não o que o arquivo diz.
-if sshd -T 2>/dev/null | grep -qx 'passwordauthentication no'; then
+# Confere o que o sshd de fato aplicou, não o que o arquivo diz. A saída vai para uma variável antes do grep: um
+# "sshd -T | grep -q" com pipefail falha quando o grep sai cedo e o sshd toma SIGPIPE (aviso falso de senha ligada).
+SSHD_EFETIVO=$(sshd -T 2>/dev/null || true)
+if grep -qx 'passwordauthentication no' <<< "$SSHD_EFETIVO"; then
   echo "SSH: só por chave (a senha do root segue valendo no console VNC do provedor)."
 else
   echo "SSH: a senha ainda vale no SSH."
@@ -199,7 +209,7 @@ apt-get clean
 
 log "Pronto"
 docker version --format 'Docker {{.Server.Version}}'
-docker node ls
+[ "$SWARM" != sim ] || docker node ls
 ufw status
 fail2ban-client status
 [ -n "${SENHA_NO_SSH:-}" ] && echo "ATENÇÃO: a senha do root ainda vale no SSH. Ponha a chave em /root/.ssh/authorized_keys e rode de novo." || true
